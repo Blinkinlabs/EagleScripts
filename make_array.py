@@ -1,4 +1,4 @@
-# Hacky code to create an array of parts in Eagle. Great way to make an LED matrix!
+# Hacky code to create an array of parts in Eagle. Great way to make an LED array!
 # By Matt Mets
 
 
@@ -6,13 +6,13 @@ import xml.etree.ElementTree as ET
 import copy
 import argparse
 
-parser = argparse.ArgumentParser(description='Create a matrix of parts for Eagle PCB. Tested with Eagle 6.5.0.')
+parser = argparse.ArgumentParser(description='Create a array of parts for Eagle PCB. Tested with Eagle 6.5.0.')
 parser.add_argument('filepath', metavar='in-file',
                    help='Design name (without extension)')
 parser.add_argument('-r', metavar='rows', dest='rows', type=int, default=4,
-                   help='Number of rows in the matrix')
+                   help='Number of rows in the array')
 parser.add_argument('-c', metavar='cols', dest='cols', type=int, default=4,
-                   help='Number of columns in the matrix')
+                   help='Number of columns in the array')
 parser.add_argument('-spacingX', metavar='X spacing', dest='spacingX', type=int, default=10,
                    help='Amount of space between rows of parts on the PCB, in the default board units')
 parser.add_argument('-spacingY', metavar='Y spacing', dest='spacingY', type=int, default=-10,
@@ -27,9 +27,9 @@ args = parser.parse_args()
 
 designName = args.filepath
 boardName = designName + ".brd"
-outputBoardName = designName + "matrix" + ".brd"
+outputBoardName = designName + "_array" + ".brd"
 schematicName = designName + ".sch"
-outputSchematicName = designName + "matrix" + ".sch"
+outputSchematicName = designName + "_array" + ".sch"
 
 
 ##################################################################################
@@ -165,9 +165,9 @@ def translateSchematicElement(element, position):
         element.set('y2', str(float(element.get('y2')) + yOffset))
 
 def updateSchematicNets(position):
-    """ Update non-matrix nets
+    """ Update non-array nets
 
-    For each non-matrix net that has a segment with a matrixed position,
+    For each non-array net that has a segment with a arrayed position,
     create a new copy of that segment and append it to the net.
 
     """
@@ -192,7 +192,7 @@ def createSchematicInterconnectNets(position):
     """ Create input, output, and interconnect nets for the new part
     """
 
-    # For the first position, the matrixed signals (nIN_) are replaced with inputs to the matrix
+    # For the first position, the arrayed signals (nIN_) are replaced with inputs to the array
     if position == 1:
         for net in schematicInputNets:
             newNet = copy.deepcopy(net)
@@ -205,7 +205,7 @@ def createSchematicInterconnectNets(position):
             for label in newNet.iter('label'):
                 label = translateSchematicElement(label, position)
 
-            # If a non-matrix part references the new input net, just append the segments
+            # If a non-array part references the new input net, just append the segments
             # from the input to the existing net.
             shouldCreate = True
             for existingNet in schematicNets:
@@ -255,7 +255,7 @@ def createSchematicInterconnectNets(position):
 
                     schematicNets.append(newNet)
 
-    # For the last position, the matrixed signals (nOUT_) are replaced with outputs from the matrix
+    # For the last position, the arrayed signals (nOUT_) are replaced with outputs from the array
     if position == lastPosition:
         for net in schematicOutputNets:
             newNet = copy.deepcopy(net)
@@ -268,7 +268,7 @@ def createSchematicInterconnectNets(position):
             for label in newNet.iter('label'):
                  label = translateSchematicElement(label, position)
 
-            # If a non-matrix part references the new output net, just append the segments
+            # If a non-array part references the new output net, just append the segments
             # from the output to the existing net.
             shouldCreate = True
             for existingNet in schematicNets:
@@ -330,9 +330,9 @@ def translateBoardElement(element, position):
 
 
 def updateBoardSignals(position):
-    """" Hook the new element up to any non-matrix signals
+    """" Hook the new element up to any non-array signals
 
-    For each non-matrix signal that had a matrixed contactref entry, add the new
+    For each non-array signal that had a arrayed contactref entry, add the new
     element to it. This is mostly for power and ground, things that all of the
     elements share in parallel.
 
@@ -349,7 +349,7 @@ def createBoardInterconnectSignals(position):
     """ Create input, output, and interconnect signals for the new part
     """
 
-    # For the first position, the matrixed signals (nIN_) are replaced with inputs to the matrix
+    # For the first position, the arrayed signals (nIN_) are replaced with inputs to the array
     if position == 1:
         for signal in boardInputSignals:
             newSignal = copy.deepcopy(signal)
@@ -357,7 +357,7 @@ def createBoardInterconnectSignals(position):
             for contactref in newSignal.iter('contactref'):
                  contactref.set('element', contactref.get('element') + "%i"%(position))
 
-            # If a non-matrix part references the new signal, just append the contactrefs
+            # If a non-array part references the new signal, just append the contactrefs
             # from the new signal to the existing signal.
             # Note: At some point, maybe we care about wires/etc here?
             shouldCreate = True
@@ -392,7 +392,7 @@ def createBoardInterconnectSignals(position):
                     boardSignals.append(newSignal)
 
 
-    # For the last position, the matrixed signals (nOUT_) are replaced with outputs from the matrix
+    # For the last position, the arrayed signals (nOUT_) are replaced with outputs from the array
     if position == lastPosition:
         for signal in boardOutputSignals:
             newSignal = copy.deepcopy(signal)
@@ -400,7 +400,7 @@ def createBoardInterconnectSignals(position):
             for contactref in newSignal.iter('contactref'):
                  contactref.set('element', contactref.get('element') + "%i"%(position))
 
-            # If a non-matrix part references the new signal, just append the contactrefs
+            # If a non-array part references the new signal, just append the contactrefs
             # from the new signal to the existing signal.
             # Note: At some point, maybe we care about wires/etc here?
             shouldCreate = True
@@ -419,7 +419,7 @@ def createBoardInterconnectSignals(position):
 ##################################################################################
 
 
-# Create a new part for each matrix position, that is:
+# Create a new part for each array position, that is:
 # * Shifted in the x and y directions
 # * Renamed according to it's instantion number
 lastPosition = args.rows*args.cols
@@ -443,8 +443,8 @@ for position in range(1, lastPosition + 1):
 ######## Schematic Cleanup phase
 ##################################################################################
 
-# Now we need to clean up any segments of non-matrix nets that include a reference to
-# a pin on a matrix device.
+# Now we need to clean up any segments of non-array nets that include a reference to
+# a pin on a array device.
 for net in schematicNets:
     for segment in reversed(list(net)):
         shouldDelete = False
@@ -459,8 +459,8 @@ for net in schematicNets:
 ##################################################################################
 
 
-# Now we need to clean up any non-matrix signals that include a reference to
-# an input matrix element (since we canned those)
+# Now we need to clean up any non-array signals that include a reference to
+# an input array element (since we canned those)
 for signal in boardSignals:
     for contactref in reversed(list(signal)):
         if contactref.get('element') != None and contactref.get('element').endswith('_'):
