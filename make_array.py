@@ -1,35 +1,46 @@
-# Open the schematic and board files of an Eagle Pcb design, and make an array of whatever we find in there.
 
 import xml.etree.ElementTree as ET
 import copy
+import argparse
 
-designName = "one_led"
+parser = argparse.ArgumentParser(description='Create a matrix of parts for Eagle PCB. Tested with Eagle 6.5.0.')
+parser.add_argument('filepath', metavar='in-file',
+                   help='Design name (without extension)')
+parser.add_argument('-r', metavar='rows', dest='rows', type=int, default=4,
+                   help='Number of rows in the matrix')
+parser.add_argument('-c', metavar='cols', dest='cols', type=int, default=4,
+                   help='Number of columns in the matrix')
+parser.add_argument('-spacingX', metavar='X spacing',  dest='spacingX', type=int, default=10,
+                   help='Amount of space between rows of parts on the PCB, in the default board units')
+parser.add_argument('-spacingY', metavar='Y spacing', dest='spacingY', type=int, default=-10,
+                   help='Amount of space between columns of parts on the PCB, in the default board units')
+parser.add_argument('-schematicSpacingX', metavar='Schematix X spacing', dest='schematicSpacingX', type=int, default=40,
+                   help='Amount of space between rows of parts in the schematic, in the default board units')
+parser.add_argument('-schematicSpacingY', metavar='Schematix Y spacing', dest='schematicSpacingY', type=int, default=-40,
+                   help='Amount of space between columns of parts in the schematic, in the default board units')
+
+args = parser.parse_args()
+
+
+designName = args.filepath
 boardName = designName + ".brd"
 outputBoardName = designName + "matrix" + ".brd"
 schematicName = designName + ".sch"
 outputSchematicName = designName + "matrix" + ".sch"
 
-rows = 4
-cols = 4
-spacingX = 10
-spacingY = -10
-
-schematicSpacingX = 40
-schematicSpacingY = -40
 
 
-######## Input phase
 
-# Load the baord, and single out the elements and signals:
-Board = ET.parse(boardName)
-BoardDrawing = Board.getroot().find("drawing").find("board")
+
+##################################################################################
+######## Schematic inspection phase
+##################################################################################
 
 Schematic= ET.parse(schematicName)
 schematicDrawing = Schematic.getroot().find("drawing").find("schematic")
 
 
-######## Schematic inspection phase
-
+# Separate out the 
 # Remove any part whose name ends in _, and store them for later copying
 schematicParts = schematicDrawing.find("parts")
 schematicMatrixParts = ET.Element("parts")
@@ -61,7 +72,12 @@ for net in reversed(schematicNets):
     schematicOutputNets.append(net)
 
 
+##################################################################################
 ######## Board inspection phase
+##################################################################################
+
+Board = ET.parse(boardName)
+BoardDrawing = Board.getroot().find("drawing").find("board")
 
 # Remove any element whose name ends in _, and store them for later copying
 boardElements = BoardDrawing.find("elements")
@@ -85,23 +101,33 @@ for signal in reversed(boardSignals):
     boardOutputSignals.append(signal)
 
 
+##################################################################################
 ######## Schematic creation functions
+##################################################################################
 
 def createSchematicParts(instance):
-  # For each of the elements that were in the original board file,
-  # create a copy of the element at the new location
+  """ Create all the Schematic parts needed for this instance
+  
+  For each of the elements that were in the original board file,
+  create a copy of the element at the new location
+
+  """
   for part in schematicMatrixParts:
     # Create a copy of them
     newPart = copy.deepcopy(part)
 
     # Adjust the name
-    newPart.set('name', part.get('name') + "%i"%(instance))
+    renameElement(newPart, instance)
 
     schematicParts.append(newPart)
 
 def createSchematicInstances(instance):
-  # For each of the elements that were in the original board file,
-  # create a copy of the element at the new location
+  """ Create all of the schematic instances needed for this instance
+
+  For each of the elements that were in the original board file,
+  create a copy of the element at the new location
+
+  """
   for sourceInstance in schematicMatrixInstances:
     # Create a copy of them
     newInstance = copy.deepcopy(sourceInstance)
@@ -110,24 +136,26 @@ def createSchematicInstances(instance):
     newInstance.set('part', sourceInstance.get('part') + "%i"%(instance))
 
     # Adjust the x and y position
-    newInstance.set('x', str(float(sourceInstance.get('x')) + c*schematicSpacingX))
-    newInstance.set('y', str(float(sourceInstance.get('y')) + r*schematicSpacingY))
+    translateSchematicElement(newInstance, instance)
 
     schematicInstances.append(newInstance)
 
 
 def translateSchematicElement(part, instance):
-  xOffset = ((instance-1)%cols)*schematicSpacingX
-  yOffset = ((instance-1)/cols)*schematicSpacingY
+  # Translate a schematic element to a new location, based on it's instance number
+  xOffset = ((instance-1)%args.cols)*args.schematicSpacingX
+  yOffset = ((instance-1)/args.cols)*args.schematicSpacingY
 
   if(part.get('x') != None):
     part.set('x', str(float(part.get('x')) + xOffset))
   if(part.get('y') != None):
     part.set('y', str(float(part.get('y')) + yOffset))
+
   if(part.get('x1') != None):
     part.set('x1', str(float(part.get('x1')) + xOffset))
   if(part.get('y1') != None):
     part.set('y1', str(float(part.get('y1')) + yOffset))
+
   if(part.get('x2') != None):
     part.set('x2', str(float(part.get('x2')) + xOffset))
   if(part.get('y2') != None):
@@ -150,7 +178,7 @@ def updateSchematicNets(instance):
           if pinref.get('part').endswith('_'):
             pinref.set('part', pinref.get('part') + "%i"%(instance))
         for item in newSegment.iter():
-          item = translateSchematicElement(item, instance)
+          translateSchematicElement(item, instance)
          
         net.append(newSegment)
 
@@ -208,7 +236,7 @@ def createSchematicInterconnectNets(instance):
 
           schematicNets.append(newNet)
 
-#  # For the last instance, the matrixed signals (nOUT_) are replaced with outputs from the matrix
+  # For the last instance, the matrixed signals (nOUT_) are replaced with outputs from the matrix
   if instance == lastInstance:
     for net in schematicOutputNets:
       newNet = copy.deepcopy(net)
@@ -223,7 +251,9 @@ def createSchematicInterconnectNets(instance):
       schematicNets.append(newNet)
 
 
+##################################################################################
 ######## Board creation functions
+##################################################################################
 
 def createBoardElements(instance):
   # For each of the elements that were in the original board file,
@@ -233,13 +263,41 @@ def createBoardElements(instance):
     newElement = copy.deepcopy(element)
 
     # Adjust the name
-    newElement.set('name', element.get('name') + "%i"%(instance))
+    #newElement.set('name', element.get('name') + "%i"%(instance))
+    renameElement(newElement, instance)
 
     # Adjust the x and y position
-    newElement.set('x', str(float(element.get('x')) + c*spacingX))
-    newElement.set('y', str(float(element.get('y')) + r*spacingY))
+    translateBoardElement(newElement, instance)
 
     boardElements.append(newElement)
+
+def renameElement(part, instance):
+  # Rename a board element, based on it's instance number
+  # This should result in each consecutive part being named _1, _2, etc.
+  # This is shared between the board and schematic, to try and keep them consistent.
+  part.set('name', part.get('name') + "%i"%(instance))
+
+def translateBoardElement(part, instance):
+  # Translate a board element to a new location, based on it's instance number
+  xOffset = ((instance-1)%args.cols)*args.spacingX
+  yOffset = ((instance-1)/args.cols)*args.spacingY
+
+  if(part.get('x') != None):
+    part.set('x', str(float(part.get('x')) + xOffset))
+  if(part.get('y') != None):
+    part.set('y', str(float(part.get('y')) + yOffset))
+
+  if(part.get('x1') != None):
+    part.set('x1', str(float(part.get('x1')) + xOffset))
+  if(part.get('y1') != None):
+    part.set('y1', str(float(part.get('y1')) + yOffset))
+
+  if(part.get('x2') != None):
+    part.set('x2', str(float(part.get('x2')) + xOffset))
+  if(part.get('y2') != None):
+    part.set('y2', str(float(part.get('y2')) + yOffset))
+
+  return part
 
 
 def updateBoardSignals(instance):
@@ -296,16 +354,18 @@ def createBoardInterconnectSignals(instance):
       boardSignals.append(newSignal)
 
 
+##################################################################################
 ######## Matrix loop phase
+##################################################################################
 
 
 # For each position in the matrix, create a new set of elements that is:
 # * Shifted in the x and y directions
 # * Renamed according to it's X and Y location
-for r in range(0, rows):
-  for c in range(0, cols):
-    instance = 1 + r*cols + c
-    lastInstance = rows*cols
+for r in range(0, args.rows):
+  for c in range(0, args.cols):
+    instance = 1 + r*args.cols + c
+    lastInstance = args.rows*args.cols
 
     # Create copies of the schematic parts and instances, update existing nets, and add
     # intermediate nets.
@@ -321,7 +381,9 @@ for r in range(0, rows):
     createBoardInterconnectSignals(instance)
 
 
+##################################################################################
 ######## Schematic Cleanup phase
+##################################################################################
 
 # Now we need to clean up any segments of non-matrix nets that include a reference to
 # a pin on a matrix device.
@@ -334,7 +396,9 @@ for net in schematicNets:
     if shouldDelete:
       net.remove(segment)
 
+##################################################################################
 ######## Board Cleanup phase
+##################################################################################
 
 
 # Now we need to clean up any non-matrix signals that include a reference to
@@ -345,7 +409,9 @@ for signal in boardSignals:
       signal.remove(contactref)
 
 
+##################################################################################
 ######## Write out phase
+##################################################################################
 
 Board.write(outputBoardName, encoding="utf-8", xml_declaration=True)
 Schematic.write(outputSchematicName, encoding="utf-8", xml_declaration=True)
