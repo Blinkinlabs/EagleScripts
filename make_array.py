@@ -1,3 +1,6 @@
+# Hacky code to create an array of parts in Eagle. Great way to make an LED matrix!
+# By Matt Mets
+
 
 import xml.etree.ElementTree as ET
 import copy
@@ -10,7 +13,7 @@ parser.add_argument('-r', metavar='rows', dest='rows', type=int, default=4,
                    help='Number of rows in the matrix')
 parser.add_argument('-c', metavar='cols', dest='cols', type=int, default=4,
                    help='Number of columns in the matrix')
-parser.add_argument('-spacingX', metavar='X spacing',  dest='spacingX', type=int, default=10,
+parser.add_argument('-spacingX', metavar='X spacing', dest='spacingX', type=int, default=10,
                    help='Amount of space between rows of parts on the PCB, in the default board units')
 parser.add_argument('-spacingY', metavar='Y spacing', dest='spacingY', type=int, default=-10,
                    help='Amount of space between columns of parts on the PCB, in the default board units')
@@ -29,9 +32,6 @@ schematicName = designName + ".sch"
 outputSchematicName = designName + "matrix" + ".sch"
 
 
-
-
-
 ##################################################################################
 ######## Schematic inspection phase
 ##################################################################################
@@ -40,8 +40,7 @@ Schematic= ET.parse(schematicName)
 schematicDrawing = Schematic.getroot().find("drawing").find("schematic")
 
 
-# Separate out the 
-# Remove any part whose name ends in _, and store them for later copying
+# Remove any part whose name ends in _, and store them for later duplication
 schematicParts = schematicDrawing.find("parts")
 schematicMatrixParts = ET.Element("parts")
 for part in reversed(schematicParts):
@@ -49,7 +48,7 @@ for part in reversed(schematicParts):
         schematicParts.remove(part)
         schematicMatrixParts.append(part)
 
-# Remove any instance whose name ends in _, and store them for later copying
+# Remove any instance whose name ends in _, and store them for later duplication
 # Note that we are only considering things on the first schematic sheet!
 schematicInstances = schematicDrawing.find(".//instances")
 schematicMatrixInstances = ET.Element("instance")
@@ -58,7 +57,7 @@ for instance in reversed(schematicInstances):
         schematicInstances.remove(instance)
         schematicMatrixInstances.append(instance)
 
-# Remove any net whose name ends in IN_ or OUT_, and store them for later copying
+# Remove any net whose name ends in IN_ or OUT_, and store them for later duplication
 # Note that we are only considering things on the first schematic sheet!
 schematicNets = schematicDrawing.find(".//nets")
 schematicInputNets = ET.Element("nets")
@@ -79,7 +78,7 @@ for net in reversed(schematicNets):
 Board = ET.parse(boardName)
 BoardDrawing = Board.getroot().find("drawing").find("board")
 
-# Remove any element whose name ends in _, and store them for later copying
+# Remove any element whose name ends in _, and store them for later duplication 
 boardElements = BoardDrawing.find("elements")
 boardMatrixElements = ET.Element("elements")
 for element in reversed(boardElements):
@@ -88,7 +87,7 @@ for element in reversed(boardElements):
         boardMatrixElements.append(element)
 
 
-# Remove any signal whose name ends in IN_ or OUT_, and store them for later copying
+# Remove any signal whose name ends in IN_ or OUT_, and store them for later duplication
 boardSignals = BoardDrawing.find("signals")
 boardInputSignals = ET.Element("signals")
 boardOutputSignals = ET.Element("signals")
@@ -117,7 +116,7 @@ def createSchematicParts(position):
         newPart = copy.deepcopy(part)
 
         # Adjust the name
-        renameElement(newPart, position)
+    	newPart.set('name', newPart.get('name') + "%i"%(position))
 
         schematicParts.append(newPart)
 
@@ -141,7 +140,7 @@ def createSchematicInstances(position):
         schematicInstances.append(newInstance)
 
 
-def translateSchematicElement(part, position):
+def translateSchematicElement(element, position):
     """ Translate a schematic element to a new location
 
     Translate a schematic element to a new location, based on it's position number
@@ -150,22 +149,20 @@ def translateSchematicElement(part, position):
     xOffset = ((position-1)%args.cols)*args.schematicSpacingX
     yOffset = ((position-1)/args.cols)*args.schematicSpacingY
 
-    if(part.get('x') != None):
-        part.set('x', str(float(part.get('x')) + xOffset))
-    if(part.get('y') != None):
-        part.set('y', str(float(part.get('y')) + yOffset))
+    if(element.get('x') != None):
+        element.set('x', str(float(element.get('x')) + xOffset))
+    if(element.get('y') != None):
+        element.set('y', str(float(element.get('y')) + yOffset))
 
-    if(part.get('x1') != None):
-        part.set('x1', str(float(part.get('x1')) + xOffset))
-    if(part.get('y1') != None):
-        part.set('y1', str(float(part.get('y1')) + yOffset))
+    if(element.get('x1') != None):
+        element.set('x1', str(float(element.get('x1')) + xOffset))
+    if(element.get('y1') != None):
+        element.set('y1', str(float(element.get('y1')) + yOffset))
 
-    if(part.get('x2') != None):
-        part.set('x2', str(float(part.get('x2')) + xOffset))
-    if(part.get('y2') != None):
-        part.set('y2', str(float(part.get('y2')) + yOffset))
-
-    return part
+    if(element.get('x2') != None):
+        element.set('x2', str(float(element.get('x2')) + xOffset))
+    if(element.get('y2') != None):
+        element.set('y2', str(float(element.get('y2')) + yOffset))
 
 def updateSchematicNets(position):
     """ Update non-matrix nets
@@ -207,7 +204,18 @@ def createSchematicInterconnectNets(position):
                 wire = translateSchematicElement(wire, position)
             for label in newNet.iter('label'):
                 label = translateSchematicElement(label, position)
-            schematicNets.append(newNet)
+
+            # If a non-matrix part references the new input net, just append the segments
+            # from the input to the existing net.
+            shouldCreate = True
+            for existingNet in schematicNets:
+                if existingNet.get('name') == newNet.get('name'):
+                    shouldCreate = False
+                    for segment in newNet.iter('segment'):
+                        existingNet.append(segment)
+            # Otherwise, add the input net to the schematic.
+            if shouldCreate:
+                schematicNets.append(newNet)
 
     # For positions besides the first one, their inputs and output signals (nIN_ and nOUT_) are replaced
     # by new nMID_x signals, which connect the output of the previous position to the input of the
@@ -259,7 +267,18 @@ def createSchematicInterconnectNets(position):
                  wire = translateSchematicElement(wire, position)
             for label in newNet.iter('label'):
                  label = translateSchematicElement(label, position)
-            schematicNets.append(newNet)
+
+            # If a non-matrix part references the new output net, just append the segments
+            # from the output to the existing net.
+            shouldCreate = True
+            for existingNet in schematicNets:
+                if existingNet.get('name') == newNet.get('name'):
+                    shouldCreate = False
+                    for segment in newNet.iter('segment'):
+                        existingNet.append(segment)
+            # Otherwise, add the input net to the schematic.
+            if shouldCreate:
+                schematicNets.append(newNet)
 
 
 ##################################################################################
@@ -267,54 +286,57 @@ def createSchematicInterconnectNets(position):
 ##################################################################################
 
 def createBoardElements(position):
-    # For each of the elements that were in the original board file,
-    # create a copy of the element at the new location
+    """ Create all of the board elements needed for this position
+
+    For each of the elements that were in the original board file,
+    create a copy of the element at the new location
+
+    """
     for element in boardMatrixElements:
-        # Create a copy of them
+        # Create a copy of the element
         newElement = copy.deepcopy(element)
 
         # Adjust the name
-        #newElement.set('name', element.get('name') + "%i"%(position))
-        renameElement(newElement, position)
+    	newElement.set('name', newElement.get('name') + "%i"%(position))
 
         # Adjust the x and y position
         translateBoardElement(newElement, position)
 
         boardElements.append(newElement)
 
-def renameElement(part, position):
-    # Rename a board element, based on it's position number
-    # This should result in each consecutive part being named _1, _2, etc.
-    # This is shared between the board and schematic, to try and keep them consistent.
-    part.set('name', part.get('name') + "%i"%(position))
+def translateBoardElement(element, position):
+    """ Move a board element into position
 
-def translateBoardElement(part, position):
-    # Translate a board element to a new location, based on it's position number
+    Translate a board element to a new location, based on it's position number
+
+    """
     xOffset = ((position-1)%args.cols)*args.spacingX
     yOffset = ((position-1)/args.cols)*args.spacingY
 
-    if(part.get('x') != None):
-        part.set('x', str(float(part.get('x')) + xOffset))
-    if(part.get('y') != None):
-        part.set('y', str(float(part.get('y')) + yOffset))
+    if(element.get('x') != None):
+        element.set('x', str(float(element.get('x')) + xOffset))
+    if(element.get('y') != None):
+        element.set('y', str(float(element.get('y')) + yOffset))
 
-    if(part.get('x1') != None):
-        part.set('x1', str(float(part.get('x1')) + xOffset))
-    if(part.get('y1') != None):
-        part.set('y1', str(float(part.get('y1')) + yOffset))
+    if(element.get('x1') != None):
+        element.set('x1', str(float(element.get('x1')) + xOffset))
+    if(element.get('y1') != None):
+        element.set('y1', str(float(element.get('y1')) + yOffset))
 
-    if(part.get('x2') != None):
-        part.set('x2', str(float(part.get('x2')) + xOffset))
-    if(part.get('y2') != None):
-        part.set('y2', str(float(part.get('y2')) + yOffset))
-
-    return part
+    if(element.get('x2') != None):
+        element.set('x2', str(float(element.get('x2')) + xOffset))
+    if(element.get('y2') != None):
+        element.set('y2', str(float(element.get('y2')) + yOffset))
 
 
 def updateBoardSignals(position):
-    # For each non-matrix signal that had a matrixed contactref entry, add the new
-    # element to it. This is mostly for power and ground, things that all of the
-    # elements share in parallel.
+    """" Hook the new element up to any non-matrix signals
+
+    For each non-matrix signal that had a matrixed contactref entry, add the new
+    element to it. This is mostly for power and ground, things that all of the
+    elements share in parallel.
+
+    """
     for signal in boardSignals:
         for contactref in signal.iter('contactref'):
             if contactref.get('element').endswith('_'):
@@ -324,6 +346,9 @@ def updateBoardSignals(position):
 
 
 def createBoardInterconnectSignals(position):
+    """ Create input, output, and interconnect signals for the new part
+    """
+
     # For the first position, the matrixed signals (nIN_) are replaced with inputs to the matrix
     if position == 1:
         for signal in boardInputSignals:
@@ -331,7 +356,19 @@ def createBoardInterconnectSignals(position):
             newSignal.set('name', signal.get('name')[:-1])
             for contactref in newSignal.iter('contactref'):
                  contactref.set('element', contactref.get('element') + "%i"%(position))
-            boardSignals.append(newSignal)
+
+            # If a non-matrix part references the new signal, just append the contactrefs
+            # from the new signal to the existing signal.
+            # Note: At some point, maybe we care about wires/etc here?
+            shouldCreate = True
+            for existingSignal in boardSignals:
+                if existingSignal.get('name') == newSignal.get('name'):
+                    shouldCreate = False
+                    for contactref in newSignal.iter('contactref'):
+                        existingSignal.append(contactref)
+            # Otherwise, add the new signal to the board.
+            if shouldCreate:
+                boardSignals.append(newSignal)
 
     # For positions besides the first one, their inputs and output signals (nIN_ and nOUT_) are replaced
     # by new nMID_x signals, which connect the output of the previous position to the input of the
@@ -362,7 +399,19 @@ def createBoardInterconnectSignals(position):
             newSignal.set('name', signal.get('name')[:-1])
             for contactref in newSignal.iter('contactref'):
                  contactref.set('element', contactref.get('element') + "%i"%(position))
-            boardSignals.append(newSignal)
+
+            # If a non-matrix part references the new signal, just append the contactrefs
+            # from the new signal to the existing signal.
+            # Note: At some point, maybe we care about wires/etc here?
+            shouldCreate = True
+            for existingSignal in boardSignals:
+                if existingSignal.get('name') == newSignal.get('name'):
+                    shouldCreate = False
+                    for contactref in newSignal.iter('contactref'):
+                        existingSignal.append(contactref)
+            # Otherwise, add the new signal to the board.
+            if shouldCreate:
+                boardSignals.append(newSignal)
 
 
 ##################################################################################
