@@ -13,6 +13,8 @@ parser.add_argument('-r', metavar='rows', dest='rows', type=int, default=4,
                    help='Number of rows in the array')
 parser.add_argument('-c', metavar='cols', dest='cols', type=int, default=4,
                    help='Number of columns in the array')
+parser.add_argument('-z', '--zigzag', action='store_true',
+                   help='If specificed, connect the array elements in a zigzag pattern')
 parser.add_argument('-spacingX', metavar='X spacing', dest='spacingX', type=int, default=10,
                    help='Amount of space between rows of parts on the PCB, in the default board units')
 parser.add_argument('-spacingY', metavar='Y spacing', dest='spacingY', type=int, default=-10,
@@ -60,8 +62,10 @@ for instance in reversed(schematicInstances):
 # Remove any net whose name ends in IN_ or OUT_, and store them for later duplication
 # Note that we are only considering things on the first schematic sheet!
 schematicNets = schematicDrawing.find(".//nets")
-schematicInputNets = ET.Element("nets")
-schematicOutputNets = ET.Element("nets")
+schematicInputNets = ET.Element("nets")    # Serial nets (input to each position)
+schematicOutputNets = ET.Element("nets")   # Serial nets (output from each position)
+schematicRowNets = ET.Element("nets")      # Row-column matrix nets, row side
+schematicColNets = ET.Element("nets")      # Row-column matrix nets, column side
 for net in reversed(schematicNets):
     if net.get('name').endswith("IN_"):
         schematicNets.remove(net)
@@ -69,6 +73,12 @@ for net in reversed(schematicNets):
     elif net.get('name').endswith("OUT_"):
         schematicNets.remove(net)
         schematicOutputNets.append(net)
+    if net.get('name').endswith("ROW_"):
+        schematicNets.remove(net)
+        schematicRowNets.append(net)
+    if net.get('name').endswith("COL_"):
+        schematicNets.remove(net)
+        schematicColNets.append(net)
 
 
 ##################################################################################
@@ -89,8 +99,10 @@ for element in reversed(boardElements):
 
 # Remove any signal whose name ends in IN_ or OUT_, and store them for later duplication
 boardSignals = BoardDrawing.find("signals")
-boardInputSignals = ET.Element("signals")
-boardOutputSignals = ET.Element("signals")
+boardInputSignals = ET.Element("signals")   # Serial signals (input to each position)
+boardOutputSignals = ET.Element("signals")  # Serial signals (output from each position)
+boardRowSignals = ET.Element("signals")     # Row-column matrix signals, row side
+boardColSignals = ET.Element("signals")     # Row-column matrix signals, column side
 for signal in reversed(boardSignals):
     if signal.get('name').endswith("IN_"):
         boardSignals.remove(signal)
@@ -98,6 +110,12 @@ for signal in reversed(boardSignals):
     if signal.get('name').endswith("OUT_"):
         boardSignals.remove(signal)
         boardOutputSignals.append(signal)
+    if signal.get('name').endswith("ROW_"):
+        boardSignals.remove(signal)
+        boardRowSignals.append(signal)
+    if signal.get('name').endswith("COL_"):
+        boardSignals.remove(signal)
+        boardColSignals.append(signal)
 
 
 ##################################################################################
@@ -192,7 +210,7 @@ def createSchematicInterconnectNets(position):
     """ Create input, output, and interconnect nets for the new part
     """
 
-    # For the first position, the arrayed signals (nIN_) are replaced with inputs to the array
+    # For the first position, the arrayed nets (nIN_) are replaced with inputs to the array
     if position == 1:
         for net in schematicInputNets:
             newNet = copy.deepcopy(net)
@@ -217,8 +235,8 @@ def createSchematicInterconnectNets(position):
             if shouldCreate:
                 schematicNets.append(newNet)
 
-    # For positions besides the first one, their inputs and output signals (nIN_ and nOUT_) are replaced
-    # by new nMID_x signals, which connect the output of the previous position to the input of the
+    # For positions besides the first one, their inputs and output nets (nIN_ and nOUT_) are replaced
+    # by new nMID_x nets, which connect the output of the previous position to the input of the
     # current position.
     if position > 1:
         for inputNet in schematicInputNets:
@@ -255,7 +273,7 @@ def createSchematicInterconnectNets(position):
 
                     schematicNets.append(newNet)
 
-    # For the last position, the arrayed signals (nOUT_) are replaced with outputs from the array
+    # For the last position, the arrayed nets (nOUT_) are replaced with outputs from the array
     if position == lastPosition:
         for net in schematicOutputNets:
             newNet = copy.deepcopy(net)
@@ -279,6 +297,56 @@ def createSchematicInterconnectNets(position):
             # Otherwise, add the input net to the schematic.
             if shouldCreate:
                 schematicNets.append(newNet)
+
+    # For each row, the row nets (nROW_) are replaced with a net corresponding
+    # to that row
+    for net in schematicRowNets:
+        newNet = copy.deepcopy(net)
+        newNet.set('name', net.get('name')[:-1] + "%i"%((position-1)/args.cols))
+        for pinref in newNet.iter('pinref'):
+             if pinref.get('part').endswith('_'):
+                 pinref.set('part', pinref.get('part') + "%i"%(position))
+        for wire in newNet.iter('wire'):
+             wire = translateSchematicElement(wire, position)
+        for label in newNet.iter('label'):
+             label = translateSchematicElement(label, position)
+
+        # If a non-array part references the new output net, just append the segments
+        # from the output to the existing net.
+        shouldCreate = True
+        for existingNet in schematicNets:
+            if existingNet.get('name') == newNet.get('name'):
+                shouldCreate = False
+                for segment in newNet.iter('segment'):
+                    existingNet.append(segment)
+        # Otherwise, add the input net to the schematic.
+        if shouldCreate:
+            schematicNets.append(newNet)
+
+    # For each column, the column nets (nCOL_) are replaced with a net corresponding
+    # to that column
+    for net in schematicColNets:
+        newNet = copy.deepcopy(net)
+        newNet.set('name', net.get('name')[:-1] + "%i"%((position-1)%args.cols))
+        for pinref in newNet.iter('pinref'):
+             if pinref.get('part').endswith('_'):
+                 pinref.set('part', pinref.get('part') + "%i"%(position))
+        for wire in newNet.iter('wire'):
+             wire = translateSchematicElement(wire, position)
+        for label in newNet.iter('label'):
+             label = translateSchematicElement(label, position)
+
+        # If a non-array part references the new output net, just append the segments
+        # from the output to the existing net.
+        shouldCreate = True
+        for existingNet in schematicNets:
+            if existingNet.get('name') == newNet.get('name'):
+                shouldCreate = False
+                for segment in newNet.iter('segment'):
+                    existingNet.append(segment)
+        # Otherwise, add the input net to the schematic.
+        if shouldCreate:
+            schematicNets.append(newNet)
 
 
 ##################################################################################
@@ -310,8 +378,21 @@ def translateBoardElement(element, position):
     Translate a board element to a new location, based on it's position number
 
     """
-    xOffset = ((position-1)%args.cols)*args.spacingX
-    yOffset = ((position-1)/args.cols)*args.spacingY
+
+    row = (position-1)/args.cols
+    col = (position-1)%args.cols
+    if args.zigzag:
+        if row%2 == 0:
+            xOffset = col*args.spacingX
+            yOffset = row*args.spacingY
+        else:
+            xOffset = (args.cols-col-1)*args.spacingX
+            yOffset = row*args.spacingY
+
+
+    else:
+        xOffset = col*args.spacingX
+        yOffset = row*args.spacingY
 
     if(element.get('x') != None):
         element.set('x', str(float(element.get('x')) + xOffset))
@@ -412,6 +493,46 @@ def createBoardInterconnectSignals(position):
             # Otherwise, add the new signal to the board.
             if shouldCreate:
                 boardSignals.append(newSignal)
+
+    # For each row, the row signals (nROW_) are replaced with a signal corresponding
+    # to that row
+    for signal in boardRowSignals:
+        newSignal = copy.deepcopy(signal)
+        newSignal.set('name', signal.get('name')[:-1] + "%i"%((position-1)/args.cols))
+        for contactref in newSignal.iter('contactref'):
+             contactref.set('element', contactref.get('element') + "%i"%(position))
+
+        # If this signal already exists, append the new contact reference to it.
+        # Note: At some point, maybe we care about wires/etc here?
+        shouldCreate = True
+        for existingSignal in boardSignals:
+            if existingSignal.get('name') == newSignal.get('name'):
+                shouldCreate = False
+                for contactref in newSignal.iter('contactref'):
+                    existingSignal.append(contactref)
+        # Otherwise, add the new signal to the board.
+        if shouldCreate:
+            boardSignals.append(newSignal)
+
+    # For each column, the column signals (nCOL_) are replaced with a signal corresponding
+    # to that column
+    for signal in boardColSignals:
+        newSignal = copy.deepcopy(signal)
+        newSignal.set('name', signal.get('name')[:-1] + "%i"%((position-1)%args.cols))
+        for contactref in newSignal.iter('contactref'):
+             contactref.set('element', contactref.get('element') + "%i"%(position))
+
+        # If this signal already exists, append the new contact reference to it.
+        # Note: At some point, maybe we care about wires/etc here?
+        shouldCreate = True
+        for existingSignal in boardSignals:
+            if existingSignal.get('name') == newSignal.get('name'):
+                shouldCreate = False
+                for contactref in newSignal.iter('contactref'):
+                    existingSignal.append(contactref)
+        # Otherwise, add the new signal to the board.
+        if shouldCreate:
+            boardSignals.append(newSignal)
 
 
 ##################################################################################
