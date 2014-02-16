@@ -5,6 +5,7 @@
 import xml.etree.ElementTree as ET
 import copy
 import argparse
+import math
 
 parser = argparse.ArgumentParser(description='Create a array of parts for Eagle PCB. Tested with Eagle 6.5.0.')
 parser.add_argument('filepath', metavar='in-file',
@@ -23,6 +24,14 @@ parser.add_argument('-schematicSpacingX', metavar='Schematix X spacing', dest='s
                    help='Amount of space between rows of parts in the schematic, in the default board units')
 parser.add_argument('-schematicSpacingY', metavar='Schematix Y spacing', dest='schematicSpacingY', type=int, default=-40,
                    help='Amount of space between columns of parts in the schematic, in the default board units')
+parser.add_argument('-boardCopyXMin', metavar='X copy extent minimum', dest='boardCopyXMin', type=int, default=-10,
+                   help='X minimum extent of board copy region')
+parser.add_argument('-boardCopyYMin', metavar='Y copy extent minimum', dest='boardCopyYMin', type=int, default=-10,
+                   help='Y minimum extent of board copy region')
+parser.add_argument('-boardCopyXMax', metavar='X copy extent maximum', dest='boardCopyXMax', type=int, default=10,
+                   help='X maximum extent of board copy region')
+parser.add_argument('-boardCopyYMax', metavar='Y copy extent maximum', dest='boardCopyYMax', type=int, default=10,
+                   help='Y maximum extent of board copy region')
 
 args = parser.parse_args()
 
@@ -117,6 +126,31 @@ for signal in reversed(boardSignals):
         boardSignals.remove(signal)
         boardColSignals.append(signal)
 
+# Remove any vias or wires that land in the copy region, and store them for later
+# duplication
+# This is sucky because they are inside signals...
+boardCopySignals = ET.Element("signals")
+for signal in boardSignals:
+    newSignal = ET.Element("signal")
+    newSignal.set('name', signal.get('name'))
+    for wire in signal.iter('wire'):
+        # Get the wire coordinates, oriented correctly
+        x1, x2 = sorted([float(wire.get('x1')), float(wire.get('x2'))])
+        y1, y2 = sorted([float(wire.get('y1')), float(wire.get('y2'))])
+        if x1 > args.boardCopyXMin and x2 < args.boardCopyXMax and y1 > args.boardCopyYMin and y2 < args.boardCopyYMax:
+            newSignal.append(wire)
+            # TODO: Delete the original
+
+    for via in signal.iter('via'):
+        # Get the wire coordinates, oriented correctly
+        x = float(via.get('x'))
+        y = float(via.get('y'))
+        if x > args.boardCopyXMin and x < args.boardCopyXMax and y > args.boardCopyYMin and y < args.boardCopyYMax:
+            newSignal.append(via)
+            # TODO: Delete the original
+
+    if sum(1 for i in newSignal.iter()) > 1:
+        boardCopySignals.append(newSignal)
 
 ##################################################################################
 ######## Schematic creation functions
@@ -372,6 +406,21 @@ def createBoardElements(position):
 
         boardElements.append(newElement)
 
+def rotatePoint(x,y,angle):
+    """ Rotate a board element location about the board origin
+
+    Rotates a part about the board origin
+
+    """
+    theta = math.radians(angle);
+    cs = math.cos(theta);
+    sn = math.sin(theta);
+
+    px = x * cs - y * sn 
+    py = x * sn + y * cs
+
+    return px, py
+
 def translateBoardElement(element, position):
     """ Move a board element into position
 
@@ -379,8 +428,12 @@ def translateBoardElement(element, position):
 
     """
 
+    # Note: These are for an array; replace with something different to do
+    # arbitrary layout (spiral, circle, etc)
     row = (position-1)/args.cols
     col = (position-1)%args.cols
+    rotation = 0
+
     if args.zigzag:
         if row%2 == 0:
             xOffset = col*args.spacingX
@@ -388,27 +441,39 @@ def translateBoardElement(element, position):
         else:
             xOffset = (args.cols-col-1)*args.spacingX
             yOffset = row*args.spacingY
-
+            rotation = 180
 
     else:
         xOffset = col*args.spacingX
         yOffset = row*args.spacingY
 
+
     if(element.get('x') != None):
-        element.set('x', str(float(element.get('x')) + xOffset))
-    if(element.get('y') != None):
-        element.set('y', str(float(element.get('y')) + yOffset))
+        px, py = rotatePoint(
+            float(element.get('x')),
+            float(element.get('y')),
+            rotation)
+        element.set('x', str(px + xOffset))
+        element.set('y', str(py + yOffset))
 
     if(element.get('x1') != None):
-        element.set('x1', str(float(element.get('x1')) + xOffset))
-    if(element.get('y1') != None):
-        element.set('y1', str(float(element.get('y1')) + yOffset))
+        px, py = rotatePoint(
+            float(element.get('x1')),
+            float(element.get('y1')),
+            rotation)
+        element.set('x1', str(px + xOffset))
+        element.set('y1', str(py + yOffset))
 
     if(element.get('x2') != None):
-        element.set('x2', str(float(element.get('x2')) + xOffset))
-    if(element.get('y2') != None):
-        element.set('y2', str(float(element.get('y2')) + yOffset))
+        px, py = rotatePoint(
+            float(element.get('x2')),
+            float(element.get('y2')),
+            rotation)
+        element.set('x2', str(px + xOffset))
+        element.set('y2', str(py + yOffset))
 
+    if(element.get('rot') != None):
+        element.set('rot', 'R%i'%(float(element.get('rot')[1:]) + rotation))
 
 def updateBoardSignals(position):
     """" Hook the new element up to any non-array signals
@@ -534,6 +599,29 @@ def createBoardInterconnectSignals(position):
         if shouldCreate:
             boardSignals.append(newSignal)
 
+def createBoardCopySignals(position):
+    """ Create an instance of all the wires and vias that were in the copy region """
+    for signal in boardCopySignals:
+        # Create a copy of the signal list, and translate the elemnts in it
+        newSignal = copy.deepcopy(signal)
+        for wire in newSignal.iter('wire'):
+            translateBoardElement(wire, position)
+        for via in newSignal.iter('via'):
+            translateBoardElement(via, position)
+
+        # If this signal already exists, append the wires and vias to it.
+        shouldCreate = True
+        for existingSignal in boardSignals:
+            if existingSignal.get('name') == newSignal.get('name'):
+                shouldCreate = False
+                for wire in newSignal.iter('wire'):
+                    existingSignal.append(wire)
+                for via in newSignal.iter('via'):
+                    existingSignal.append(via)
+        # Otherwise, add the new signal to the board.
+        if shouldCreate:
+            boardSignals.append(newSignal)
+    
 
 ##################################################################################
 ######## New part creation phase
@@ -558,6 +646,7 @@ for position in range(1, lastPosition + 1):
     createBoardElements(position)
     updateBoardSignals(position)
     createBoardInterconnectSignals(position)
+    createBoardCopySignals(position)
 
 
 ##################################################################################
